@@ -1,3 +1,4 @@
+import { spawn } from 'child_process';
 import type { PredictedProcess } from './PredictedProcess';
 
 export class PredictedProcessesManager {
@@ -67,6 +68,42 @@ export class PredictedProcessesManager {
    * ```
    */
   public async runAll(signal?: AbortSignal): Promise<void> {
-    // TODO: Implement this.
+    const promises: Promise<void>[] = [];
+
+    for (const process of this._processes) {
+      const promise = new Promise<void>(async (resolve, reject) => {
+        const spawnedProcess = spawn(process.command, [], { shell: true });
+
+        spawnedProcess.on('close', (code: number) => {
+          if (code === 0) {
+            resolve(); // Resolve for successful exit
+          } else {
+            reject(new Error(`Process ${process.id} exited with code ${code}`));
+          }
+        });
+
+        spawnedProcess.on('error', (err: Error) => {
+          reject(err); // Reject for process error
+        });
+
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            spawnedProcess.kill(); // Abort the process on signal
+            reject(new Error('AbortSignal triggered'));
+          });
+        }
+      });
+
+      promises.push(promise);
+    }
+
+    const errors: Error[] = [];
+
+    await Promise.allSettled(promises.map((promise) => promise.catch((error) => errors.push(error))));
+
+    if (errors.length > 0) {
+      const errorMessage = errors.map((error) => error.message).join('\n');
+      throw new Error(`At least one process has exited with an error:\n${errorMessage}`);
+    }
   }
 }

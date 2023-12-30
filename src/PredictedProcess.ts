@@ -1,12 +1,13 @@
-import type { ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 
 export class PredictedProcess {
   private _childProcess: ChildProcess | null = null;
+  private _isRunning: boolean = false;
 
   public constructor(
     public readonly id: number,
     public readonly command: string,
-  ) {}
+  ) { }
 
   /**
    * Spawns and manages a child process to execute a given command, with handling for an optional AbortSignal.
@@ -33,7 +34,64 @@ export class PredictedProcess {
    * ```
    */
   public async run(signal?: AbortSignal): Promise<void> {
-    // TODO: Implement this.
+    // Check if the signal has already been aborted
+    if (signal && signal.aborted) {
+      throw new Error('AbortSignal already aborted');
+    }
+
+    // Check if another instance of the process is already running
+    if (this._isRunning) {
+      throw new Error('Process is already running');
+    }
+
+    // Set the flag to indicate that the process is running
+    this._isRunning = true;
+
+    return new Promise<void>((resolve, reject) => {
+      // Create a child process
+      const childProcess = spawn(this.command, { shell: true });
+
+      // Store the child process
+      this._childProcess = childProcess;
+
+      // Event handler for process completion
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        // Clean up event listeners
+        this._childProcess?.removeAllListeners();
+        this._childProcess = null;
+        this._isRunning = false;
+
+        // Check if the process was successful or aborted
+        if (code === 0) {
+          resolve();
+        } else if (signal === 'SIGABRT' || signal === null) {
+          reject(new Error(`Process aborted with signal: ${signal}`));
+        } else {
+          reject(new Error(`Process failed with code ${code}`));
+        }
+      };
+
+      // Attach event listeners
+      childProcess.once('exit', onExit);
+
+      // Attach event listener for abort signal
+      if (signal) {
+        const onAbort = () => {
+          childProcess.kill('SIGABRT');
+        };
+        signal.addEventListener('abort', onAbort);
+
+        // Remove the abort listener once the process exits
+        childProcess.once('exit', () => {
+          signal.removeEventListener('abort', onAbort);
+        });
+      }
+
+      // Event handler for process error
+      childProcess.on('error', (error: Error) => {
+        reject(error);
+      });
+    });
   }
 
   /**
@@ -65,7 +123,13 @@ export class PredictedProcess {
    * ```
    */
   public memoize(): PredictedProcess {
-    // TODO: Implement this.
-    return this;
+    // Create a new instance of PredictedProcess with the same id and command
+    const memoizedProcess = new PredictedProcess(this.id, this.command);
+
+    // Reset child process reference and running flag
+    memoizedProcess._childProcess = null;
+    memoizedProcess._isRunning = false;
+
+    return memoizedProcess;
   }
 }
